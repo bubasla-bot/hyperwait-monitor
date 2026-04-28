@@ -1,0 +1,14 @@
+run = "python3 main.py --loop"
+modules = ["python-3.11"]
+entrypoint = "main.py"
+
+[nix]
+channel = "stable-24_05"
+
+[deployment]
+run = ["python3", "main.py", "--loop"]
+deploymentTarget = "background"
+
+[[ports]]
+localPort = 8080
+externalPort = 80
