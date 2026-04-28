@@ -206,6 +206,18 @@ def send(text):
     return r.json()
 
 
+def send_document(pdf_path, caption=""):
+    with open(pdf_path, "rb") as f:
+        r = requests.post(
+            f"https://api.telegram.org/bot{TG_TOK}/sendDocument",
+            data={"chat_id": TG_CHT, "caption": caption, "parse_mode": "Markdown"},
+            files={"document": (pdf_path.name, f, "application/pdf")},
+            timeout=60,
+        )
+    r.raise_for_status()
+    return r.json()
+
+
 # ── Main ────────────────────────────────────────────────────────────────
 def run(target="yesterday"):
     today_local = (datetime.now(timezone.utc) + timedelta(hours=TZ_OFFSET_HOURS)).date()
@@ -218,11 +230,24 @@ def run(target="yesterday"):
 
     rows = [analyze(r, d) for r in fetch_restaurants()]
     msg = build_message(rows, d, label)
+    callout = pick_callout(rows)
 
-    # Telegram limit ~4096 chars — split if needed (rare)
-    chunks = [msg[i:i+3800] for i in range(0, len(msg), 3800)]
-    for c in chunks:
-        send(c)
+    # Build + send the PDF (primary deliverable)
+    try:
+        from pdf_report import build_pdf
+        pdf = build_pdf(rows, d, label, callout)
+        caption = (
+            f"📊 *HyperWait Daily Report* — {label}\n"
+            f"_{d.strftime('%a %d %b %Y')}  ·  {len(rows)} restaurants_\n\n"
+            f"{callout}"
+        )
+        send_document(pdf, caption=caption[:1000])
+        print(f"PDF sent: {pdf}")
+    except Exception as e:
+        # Fallback to text-only if PDF generation fails
+        print(f"PDF failed, sending text instead: {e}")
+        for c in [msg[i:i+3800] for i in range(0, len(msg), 3800)]:
+            send(c)
     return msg
 
 
