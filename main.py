@@ -37,6 +37,10 @@ URGENT_MIN = int(os.environ.get("HW_URGENT_MIN", "30"))   # escalate
 POLL_INTERVAL_SEC = int(os.environ.get("HW_POLL_SEC", "300"))  # 5 min
 STATE_FILE        = Path(__file__).parent / ".monitor_state.json"
 
+# Daily report (yesterday's recap) — local hour to send at, 24h
+DAILY_REPORT_HOUR  = int(os.environ.get("HW_DAILY_HOUR", "9"))
+TZ_OFFSET_HOURS    = int(os.environ.get("HW_TZ_OFFSET", "3"))   # GST = UTC+3
+
 
 # ── HyperWait API ───────────────────────────────────────────────────────
 def get(path, params=None):
@@ -166,6 +170,28 @@ def check_restaurant(restaurant, state, dry=False):
             state[key] = {"ts": time.time(), "urgent_ids": list(cur_urgent_ids)}
 
 
+# ── Daily report scheduling ─────────────────────────────────────────────
+def maybe_send_daily_report(state, dry=False):
+    """Trigger daily_report.run() once per local day at DAILY_REPORT_HOUR."""
+    from datetime import timedelta
+    now_local = datetime.now(timezone.utc) + timedelta(hours=TZ_OFFSET_HOURS)
+    today_str = now_local.date().isoformat()
+    if state.get("last_daily_report") == today_str:
+        return
+    if now_local.hour < DAILY_REPORT_HOUR:
+        return
+    print(f"  → sending daily report for {today_str}")
+    if dry:
+        state["last_daily_report"] = today_str
+        return
+    try:
+        import daily_report
+        daily_report.run("yesterday")
+        state["last_daily_report"] = today_str
+    except Exception as e:
+        print(f"  ✗ daily report failed: {e}")
+
+
 # ── Main loop ───────────────────────────────────────────────────────────
 def run_once(dry=False):
     state = load_state()
@@ -176,6 +202,7 @@ def run_once(dry=False):
             check_restaurant(r, state, dry=dry)
         except Exception as e:
             print(f"  ✗ {r['name']}: {e}")
+    maybe_send_daily_report(state, dry=dry)
     save_state(state)
 
 
@@ -184,7 +211,13 @@ def main():
     p.add_argument("--loop", action="store_true", help="poll forever")
     p.add_argument("--dry",  action="store_true", help="print only, no Telegram")
     p.add_argument("--test", action="store_true", help="send a test Telegram message and exit")
+    p.add_argument("--report", choices=["yesterday","today"], help="send daily report and exit")
     args = p.parse_args()
+
+    if args.report:
+        import daily_report
+        daily_report.run(args.report)
+        sys.exit(0)
 
     if args.test:
         ok = tg_send("✅ HyperWait monitor — test message. Bot is connected.")
